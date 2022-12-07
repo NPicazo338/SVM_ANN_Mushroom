@@ -1,0 +1,534 @@
+---
+title: "Poisonous Mushroom Classification - ANN And SVM"
+author: "Nicolas Picazo"
+date: "2022-10-15"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Poisonous Mushroom Classification
+
+In this project, we train two different models (Support Vector Machine and Artificial Neural Network) to classify the edibility of mushrooms using mushroom data collected from the UCI data website.
+
+The dataset contains 8123 mushroom observations made up of 23 variables describing physical characteristics of mushrooms. The observations are of gilled mushrooms from two different families (Agaricus and Lepiota). The target variable (dependent variable) is the edibility of the mushroom that consists of two levels (edible or poisonous).
+
+The dataset will be cleaned, explored and split into train and test subsets to build the SVM and ANN models. These two models are used for classification but can also be used for regression. They contain complex mathematical methods that identify relations in the data they process. These models are called *black box* models since their complexity makes their inner workings difficult to understand. These complex methods differ between SVM and ANN so either might not be suited to handle certain datasets. It is why both models will be used with this mushroom data and their performance compared.
+
+```{r Libraries}
+library(lattice)   #required for caret
+library(ggplot2)   #visualization and required for caret
+library(caret)     #data partition, k-fold cv, grid search and more
+library(e1071)     #SVM model
+library(nnet)      #ANN model
+library(dplyr)     #to find missing values  
+```
+
+## Loading Data
+
+```{r Data}
+#uploading data from local
+mush <- read.csv(file.choose(), header = T)
+
+#renaming column names
+colnames(mush) <- c("poisonous", "cap-shape", "cap-surface", "cap-color", "bruises", "odor", "gill-attachment", "gill-spacing", "gill-size", "gill-color", "stalk-shape", "stalk-root", "stalk-surface-above-ring", "stalk-surface-below-ring", "stalk-color-above-ring", "stalk-color-below-ring", "veil-type", "veil-color", "ring-number", "ring-type", "spore-print-color", "population", "habitat")
+
+str(mush)
+```
+
+The variables consist of single characters describing the characteristic of the mushroom.
+
+## Cleaning Dataset
+
+The set needs to be processed before training. 
+
+The variables are characters but need to be numeric to be used with both ANN and SVM models. The target variable is converted from char type to factor type. The veil-type variable is constant (has one level) so it is removed because it does not add significant information. Missing values also need to be identified and either removed or modified.
+
+```{r Cleaning}
+#converting target variable to factor type
+mush$poisonous <- as.factor(mush$poisonous)
+
+#removing veil-type since it is constant
+mush <- mush[-17]
+```
+
+### Missing Values
+
+```{r Missing Values 1}
+#looking for NA values
+sum(is.na(mush))
+```
+
+There are no missing values in the form of NA. The variables are character type so missing values might be in the form of question marks.
+
+```{r Missing Values 2}
+#checking for missing values in the form of question marks
+#printing 2 observations (if there are missing values)
+head(mush %>% filter_all(any_vars(. %in% c("?"))), n = 2)
+```
+
+There are observations in the dataset that contain question marks (4 observations). Instead of getting rid of those observations, they are changed to u (unknown) characters.
+
+```{r Missing Values 2}
+#changing ? chars to u chars
+mush[mush == "?"] <- "u"
+```
+
+## Data Exploration
+
+```{r Mushroom Proportion}
+#table of edible and poisonous mushrooms
+table(mush$poisonous)
+```
+
+Edible mushrooms make up approximately 51.8 percent of the mushrooms in the dataset (4208 mushrooms). Poisonous mushrooms make up approximately 48.2 percent (3915 mushrooms). With 8123 observations, the edibility of mushrooms is approximately balanced in this dataset.
+
+```{r Exploration 1}
+#printing scatterplot of mushroom cap shape and cap color
+ggplot(mush, aes(x = mush$'cap-shape', y = mush$'cap-color', col = mush$poisonous)) + geom_jitter(alpha = 0.20)
+```
+
+From the cap shape and color, it appears that the majority of mushrooms with a bell shape are edible. These edible bell shaped mushrooms cluster around green, brown, white and yellow color. Poisonous mushrooms cluster around the flat, knobbed and convex shapes. The yellow flat cluster and both red and brown knobbed clusters contain most poisonous data points. There is overlap between poisonous and edible mushrooms in the white, brown, gray and red flat shapes and also in the brown, gray and red convex shapes. 
+
+The scatter plot presents the difficulty of differentiating between edible and poisonous mushrooms by color and cap shape. So we compare the relationship between odor and gill color for edibility. Like color and cap shape, odor and gill color is another less tedious method of comparison when visually inspecting a mushroom.
+
+```{r Data Exploration 2}
+#printing gill color vs odor scatterplot
+ggplot(mush, aes(x = mush$'gill-color', y = mush$odor, col = mush$poisonous)) + geom_jitter(alpha = 0.20)
+```
+
+It appears that gill color and mushroom odor are better to distinguish the edibility of the mushroom. Here, we see that the edible and poisonous mushrooms are separated more clearly. The poisonous mushrooms are mostly clustered in the buff colored that have a fishy, spicy and foul smell. They are also mostly clustered in the foul smell that have a gray, chocolate and pink gill color. There are also smaller poisonous clusters in the pungent and creosote smells. The edible mushrooms are clustered around 3 odors (no smell, anise and almond) and all but buff colored gills. The largest edible clusters are brown, pink, purple and white gill color that have no smell.
+
+## Cleaning Dataset Cont.
+
+Now we convert the character variables into numerical using One-Hot-Encoding method.
+
+```{r One Hot Encoding}
+#creating a new column for each value in each variable (will have a value of 1 or 0 depending if the observation is included in the variable)
+
+for(unique_value in unique(mush$'cap-shape')) {
+  mush[paste("cap-shape", unique_value, sep = ".")] <- ifelse(mush$'cap-shape' == unique_value, 1, 0)
+}
+
+#every time a variable has been one-hot-encoded, the original variable is deleted
+mush <- mush[-2]
+
+for(unique_value in unique(mush$'cap-surface')) {
+  mush[paste("cap-surface", unique_value, sep = ".")] <- ifelse(mush$'cap-surface' == unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$'cap-color')) {
+  mush[paste("cap-color", unique_value, sep = ".")] <- ifelse(mush$'cap-color' == unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$bruises)) {
+  mush[paste("bruises", unique_value, sep = ".")] <- ifelse(mush$'bruises' == unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$odor)) {
+  mush[paste("odor", unique_value, sep = ".")] <- ifelse(mush$'odor' == unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$'gill-attachment')) {
+  mush[paste("gill-attachment", unique_value, sep = ".")] <- ifelse(mush$'gill-attachment' == unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$'gill-spacing')) {
+  mush[paste("gill-spacing", unique_value, sep = ".")] <- ifelse(mush$'gill=spacing' == unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$'gill-size')) {
+  mush[paste("gill-size", unique_value, sep = ".")] <- ifelse(mush$'gill-size' == unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$'gill-color')) {
+  mush[paste("gill-color", unique_value, sep = ".")] <- ifelse(mush$'gill-color' == unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$`stalk-shape`)) {
+  mush[paste("stalk-shape", unique_value, sep = ".")] <- ifelse(mush$`stalk-shape`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$`stalk-root`)) {
+  mush[paste("stalk-root", unique_value, sep = ".")] <- ifelse(mush$`stalk-root`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$`stalk-surface-above-ring`)) {
+  mush[paste("stalk-surface-above-ring", unique_value, sep = ".")] <- ifelse(mush$`stalk-surface-above-ring`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$`stalk-surface-below-ring`)) {
+  mush[paste("stalk-surface-below-ring", unique_value, sep = ".")] <- ifelse(mush$`stalk-surface-below-ring`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$`stalk-color-above-ring`)) {
+  mush[paste("stalk-color-above-ring", unique_value, sep = ".")] <- ifelse(mush$`stalk-color-above-ring`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$`stalk-color-below-ring`)) {
+  mush[paste("stalk-color-below-ring", unique_value, sep = ".")] <- ifelse(mush$`stalk-color-below-ring`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$`veil-color`)) {
+  mush[paste("veil-color", unique_value, sep = ".")] <- ifelse(mush$`veil-color`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$`ring-number`)) {
+  mush[paste("ring-numer", unique_value, sep = ".")] <- ifelse(mush$`ring-number`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$`ring-type`)) {
+  mush[paste("ring-type", unique_value, sep = ".")] <- ifelse(mush$`ring-type`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$`spore-print-color`)) {
+  mush[paste("spore-print-color", unique_value, sep = ".")] <- ifelse(mush$`spore-print-color`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$population)) {
+  mush[paste("population", unique_value, sep = ".")] <- ifelse(mush$`population`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+for(unique_value in unique(mush$habitat)) {
+  mush[paste("habitat", unique_value, sep = ".")] <- ifelse(mush$`habitat`==unique_value, 1, 0)
+}
+
+mush <- mush[-2]
+
+#viewing new mush dataset
+str(mush)
+```
+
+The variables have now been converted to numerical values of 0 and 1. Although, there are two one-hot-encoded variables that are logic type containing NA (gill-spacing.c and gill-spacing.w) so they are removed.
+
+The variables stalk-surface-above-ring.y, stalk-color-above-ring.y, veil-color.y, spore-print-color.b and spore-print-color.b are constant throughout the dataset. They will not allow the SVM model to scale the data properly so these constant variables are also removed.
+
+```{r Remove NA}
+#removing logic variables using which(colnames()) which returns an integer value
+mush <- mush[-which(colnames(mush) == "gill-spacing.c")]
+
+mush <- mush[-which(colnames(mush) == "gill-spacing.w")]
+
+#removing constant variables
+
+mush <- mush[-which(colnames(mush) == "stalk-surface-above-ring.y")]
+
+mush <- mush[-which(colnames(mush) == "stalk-color-above-ring.y")]
+
+mush <- mush[-which(colnames(mush) == "veil-color.y")]
+
+mush <- mush[-which(colnames(mush) == "spore-print-color.b")]
+
+#double checking dataset
+str(mush)
+```
+
+### Test and Train Sets
+
+The processed dataset is split into training and testing subsets using an 75:25 ratio. we create partitions for the test and train subsets using the createDataPartition() function from caret.
+
+```{r Train Test Split}
+#set seed
+set.seed(107)
+
+#creating partitions for test and train sets
+partition_train <- createDataPartition(y = mush$poisonous, p = 0.75, list = FALSE)
+
+#training set
+mush_train <- mush[partition_train,]
+
+#testing set
+mush_test <- mush[-partition_train,]
+```
+
+## SVM Models
+
+The SVM model can use different kernels to find an optimal hyper plane that will divide classes within the dataset. Kernels are functions that transform data to different feature spaces or dimensions.
+
+The SVM algorithm attempts to linearly separate the classes found in the data. But not all data can be separated linearly in the base dimension it finds itself in (original feature space). This is where the kernel becomes useful since it will transform the base dimension to another where the SVM can linearly separate those classes.
+
+There are 3 popular kernels (there are more) used in SVM: linear, polynomial and radial. We will build an SVM model using each of these kernels to compare their performance on this dataset.
+
+### Linear Kernel
+
+```{r Linear Kernel}
+#svm using linear kernel
+mod_svm_linear <- svm(mush_train$poisonous~., mush_train, type = "C-classification", kernel = "linear")
+
+#printing linear model
+mod_svm_linear
+```
+
+The linear SVM has 239 support vectors. These support vectors are data points that lie in the border of the dividing hyper plane. They are responsible for where the hyper plane is located and what orientation it is in.
+
+```{r Linear Prediction}
+#predictions
+svm_linear_pred <- predict(mod_svm_linear, mush_test[-1])
+
+#performance table
+table(svm_linear_pred, mush_test$poisonous)
+```
+
+The SVM using a linear kernel performed perfectly (100 percent accuracy). This might mean that there is overfitting.
+
+### Polynomial Kernel
+
+```{r Polynomial Kernel}
+#svm polynomial kernel
+mod_svm_poly <- svm(mush_train$poisonous~., mush_train, type = "C-classification", kernel = "polynomial")
+
+#printing polynomial model
+mod_svm_poly
+```
+
+The polynomial kernel contains 1440 support vectors.
+
+```{r Polynomial Prediction}
+#prediction
+svm_poly_pred <- predict(mod_svm_poly, mush_test[-1])
+
+#performance table
+table(svm_poly_pred, mush_test$poisonous)
+```
+
+The polynomial SVM also has a perfect performance. These two models might be receiving perfect performance due to overfitting.
+
+### Radial Kernel
+
+```{r Radial Kernel}
+#svm radial kernel
+mod_svm_rad <- svm(mush_train$poisonous~., mush_train, type = "C-classification", kernel = "radial")
+
+#printing radial model
+mod_svm_rad
+```
+
+There are 1443 support vectors in the radial kernel model.
+
+```{r Radial Prediction}
+#predictions
+svm_rad_pred <- predict(mod_svm_rad, mush_test[-1])
+
+#performance table
+table(svm_rad_pred, mush_test$poisonous)
+```
+
+The performance of the SVM with a radial kernel performed differently than the first two models. The model's accuracy is approximately 97.66 percent. The model is good in predicting correctly the edibility of the mushroom. The model is precise (93.03 percent) in identifying actual edible mushrooms from the set of all mushrooms the model deemed edible. The precision of the mushroom is perfect (100 percent). The model is also good at identifying edible mushrooms from the set of all actually edible mushrooms.
+
+It is important for the model to correctly identify edible mushrooms to avoid any poisoning. In this case, it is crucial to avoid false positive results. So the focus in performance of this project is getting a maximum precision and accuracy.
+
+Equations Used:
+
+Accuracy: $A = \frac{TP + TN}{TP + TN + FP + FN}$
+
+and
+
+Precision: $P = \frac{TP}{TP + FP}$
+
+### K-Fold Cross Validation Of Linear Kernel SVM
+
+The SVM model using the linear kernel performed the best out of the three different kernel models. It did not classify incorrectly any observation so there is the possibility that overfitting has occurred with the model. We use caret to perform k-fold cross validation on that model to have more confidence that there was no overfitting.
+
+```{r Linear Kernel K Fold}
+#must remove this variable in order to perform k fold on svm (variable was considered constant which kept from scaling in the first run)
+mush1  <- mush[-which(colnames(mush) == "cap-shape.c")]
+
+#splitting train and test sets for newly modified mush set using the same partition
+mush1_train <- mush1[partition_train,]
+
+mush1_test <- mush1[-partition_train,]
+
+#creating folds of the poisonous variable (target) of size 10
+folds <- createFolds(mush1_train$poisonous, k = 10)
+
+#cross validation model
+cv <- lapply(folds, function(x) {
+  
+  #separating both test and training sets into 10 subsets
+  train_fold <- mush1_train[-x,]
+  
+  test_fold <- mush1_train[x,]
+  
+  #train svm
+  svm_fold <- svm(poisonous~., train_fold, type = "C-classification", kernel = 'linear')
+  
+  #prediction
+  fold_pred <- predict(svm_fold, test_fold[-1])
+  
+  #performance
+  pfm <- table(fold_pred, test_fold$poisonous)
+  
+  accu <- as.character((pfm[1, 1] + pfm[2, 2]) / (pfm[1, 1] + pfm[2, 2] + pfm[1, 2] + pfm[2, 1]))
+  
+  pcn <- as.character((pfm[1, 1]) / (pfm[1, 1] + pfm[2, 1]))
+  
+  return(list("Accuracy" = accu, "Precision" = pcn))
+  
+  #return(cat("Accuracy: ", accuracy, "\nPrecision: ", pcn))
+})
+
+#cv printing performance (accuracy)
+cv
+```
+
+Using 10-fold cross validation helps to avoid overfitting. Using this method, the model had 100 percent accuracy and precision. The 10-fold cross validation increases the probability and our confidence that the linear kernel model has not been overfitted.
+
+## ANN Models
+
+We now move to train different ANN models containing different numbers of units in the hidden layers and different number of iterations. The ANN model used is from the nnet library.
+
+Note: Due to the nature of the way the ANN model performs, the performance results will vary every time it is trained and validated. So the performance calculations in the comments below will be of when the code chunk was run at the time. Although this variability is reduced by setting a seed before each model.
+
+### ANN: Single Hidden Layer Unit
+
+```{r Single Hidden Unit}
+#set.seed(107)
+
+#building model
+mod_nn <- nnet(poisonous~., data = mush_train, size = 1)
+
+#prediction
+nn_pred <- predict(mod_nn, mush_test[-1], type = "class")
+
+#performance table
+table(nn_pred, mush_test$poisonous)
+```
+
+With one unit in the hidden layer, the model performed better than the radial kernel SVM model. Its accuracy is approximately 98.23 percent and its precision is approximately 98.48 percent.
+
+### ANN: Five Hidden Layer Units
+
+```{r 5 Hidden Units}
+#set.seed(107)
+
+#model
+mod_nn5 <- nnet(poisonous~., data = mush_train, size = 5)
+
+#prediction
+nn_pred5 <- predict(mod_nn5, mush_test[-1], type = "class")
+
+#performance table
+table(nn_pred5, mush_test$poisonous)
+```
+
+The 5 unit model performed slightly worse than the single unit model. Its accuracy and precision are approximately 99.01 and 100 percent respectively.
+
+### ANN: Eight Hidden Layer Units
+
+```{r 8 Hidden Units}
+#set.seed(107)
+
+#model
+mod_nn8 <- nnet(poisonous~., data = mush_train, size = 8)
+
+#prediction
+nn_pred8 <- predict(mod_nn8, mush_test[-1], type = "class")
+
+#performance
+table(nn_pred8, mush_test$poisonous)
+```
+
+The 8 unit model has performed the best so far with 100 percent accuracy and precision. This could mean that the model has overfit the training data.
+
+From the previous NN models, it appears that performance improves as the number of hidden units increases (directly proportional). The nnet() function contains a variety of different arguments (hyperparameters). Instead of going through the process of creating more models with a variety of hyperparameters at a time we use the caret library. This library will allow us to do hyperparameter tuning on the ANN model to find the optimal values.
+
+### Hyperparameter Tuning For ANN Using Caret Library
+
+```{r Hyperparameter Tuning}
+#parameters for train function
+cntrl <- trainControl(method = "repeatedcv", number = 5, repeats = 2, classProbs = TRUE, summaryFunction = twoClassSummary)
+
+#hyperparameter tuning grid
+grid_nn <- expand.grid(size = seq(from = 1, to = 4, by = 1), decay = seq(from = 0, to = 0.5, by = 0.1))
+
+#training nnet model. trace = FALSE to suppress the long convergence output.
+nnet_caret <- train(poisonous ~., data = mush_train, method = "nnet", metric = "ROC", trControl = cntrl, tuneGrid = grid_nn, trace = FALSE)
+
+#displaying new nnet model
+nnet_caret
+```
+
+The optimal model was determined to be have one hidden unit and the decay value of 0.5. The way the parameters were found was by using K-fold cross validation as resampling method. 
+
+Now the optimal model is used to make predictions using the test dataset.
+
+```{r Caret Predict}
+#predicting with the model containing the optimal parameters (decay and size)
+nnetCaret_pred <- predict(nnet_caret, newdata = mush_test)
+
+#displaying model
+str(nnetCaret_pred)
+```
+
+The predictions contain two levels (edible and poisonous) as is expected.
+
+The performance of the model is calculated using the table function.
+
+```{r Optimal Parameter Performance}
+#performance table
+table(nnetCaret_pred, mush_test$poisonous)
+```
+
+The model has a perfect performance. It correctly guessed all edible and poisonous mushrooms.
+
+### Conclusion
+
+Both the ANN and SVM models were able to have excellent performance using certain parameter values. It is not certain, from the results above, which model is the better choice for this classification problem. 
+
+The linear kernel was the best transformation for the dataset for the SVM model. It performed the best with 100 percent accuracy and precision by both using just data splitting and 10-fold cross validation.
+
+There was more performance variation for the ANN model due to the nature of the model. The variation in performance was mitigated by setting a seed before each model iteration. Grid search from the caret library determined that the optimal parameter for the amount of hidden units and the value of decay value were a single unit with a decay value of 0.5. This model performed as well as the linear kernel SVM model.
+
+## Resources
+
+Brownlee, J. (2017, July 27). Why One-Hot Encode Data in Machine Learning? Machine Learning Mastery. https://machinelearningmastery.com/why-one-hot-encode-data-in-machine-learning/
+
+Jones, A. (2017, August 25). One Hot Encoding in R. Analyticslink01. https://www.analytics-link.com/post/2017/08/25/how-to-r-one-hot-encoding
+
+Svm function | R Documentation. (n.d.). Retrieved October 15, 2022, from https://www.rdocumentation.org/packages/e1071/versions/1.7-3/topics/svm
+
+UCI Machine Learning Repository: Mushroom Data Set. (n.d.). Retrieved October 15, 2022, from http://archive.ics.uci.edu/ml/datasets/Mushroom
+
+A Short Introduction To The Caret Package. (n.d.). Retrieved November 10, 2022, from https://cran.r-project.org/web/packages/caret/vignettes/caret.html
+
+Loessi, Mark. (2019). K-Fold Cross Validation Applied To SVM Model In R. **RPubs By RStudio**. https://rpubs.com/markloessi/506713
